@@ -1,14 +1,19 @@
+import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
 import discord
 import pandas as pd
-import pymysql
-
-from datetime import datetime
 from discord import utils
 from discord.ext import commands
-from dotenv import load_dotenv
+from sqlalchemy import select, update, func, create_engine, Engine
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker, AsyncEngine
+from sqlalchemy.orm import Session, sessionmaker
 
 import config
+from database.models import Base, Guild, GuildChannel, ChannelPurpose, User, GuildBinding
 
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
@@ -19,55 +24,86 @@ message_id = 0
 
 
 class Listen(commands.Cog):
+    async_session: async_sessionmaker
+    session: sessionmaker
+
+    async_engine: AsyncEngine
+    engine: Engine
+
     def __init__(self, bot):
-        load_dotenv()
-        self.db = pymysql.connect(host=os.environ.get("MYSQL_IP"), port=3306, user=os.environ.get("MYSQL_USER"),
-                                  password=os.environ.get("MYSQL_PASSWORD"), database=os.environ.get("MYSQL_DB"))
-        self.sql = self.db.cursor()
-        self.sql.execute("USE bot_db;")
+        self.async_engine = create_async_engine(
+            f'postgresql+asyncpg://{os.environ.get("PGSQL_USER")}:{os.environ.get("PGSQL_PASSWORD")}@{os.environ.get("PGSQL_HOSTNAME")}:5432/{os.environ.get("PGSQL_DB")}')
+        # self.async_engine.echo = True
+        self.async_session = async_sessionmaker(bind=self.async_engine, expire_on_commit=False)
+
+        self.engine = create_engine(
+            f'postgresql://{os.environ.get("PGSQL_USER")}:{os.environ.get("PGSQL_PASSWORD")}@{os.environ.get("PGSQL_HOSTNAME")}:5432/{os.environ.get("PGSQL_DB")}')
+        self.session = sessionmaker(bind=self.engine, expire_on_commit=False)
+        # self.engine.echo = True
+
         self.bot = bot
         self.song_queue = {}
         self.message = {}
 
     @commands.Cog.listener()
     async def on_ready(self):
-        for guild in self.bot.guilds:
-            self.sql.execute("SELECT cid FROM `Servers` WHERE guild_id=%s", (str(guild.id)))
-            res = list(self.sql.fetchone())[0]
-            r = (str(guild.id), str(guild.owner_id), guild.name, guild.created_at.strftime("%Y-%m-%d %H:%M:%S"), res)
-            self.sql.execute("REPLACE INTO `Servers` (guild_id, owner_id, name, created_at, cid) VALUES (%s, %s, %s, "
-                             "%s, %s)", r)
-        self.db.commit()
-        query = "SELECT * FROM Servers ORDER BY guild_id"
-        channel_df = pd.read_sql(sql=query, con=self.db)
-        print('-' * 50, '\n', channel_df)
+        async with self.async_session.begin() as session:
+            guild_member = []
+            print('Bot guilds:')
+            for guild in self.bot.guilds:
+                print(f'{guild.id} {guild.name}')
+                new_guild = {
+                    "id": str(guild.id),
+                    "last_name": str(guild.name)
+                }
+                new_guild = Guild(**new_guild)
+                await session.merge(new_guild)
+                for member in guild.members:
+                    new_member = {
+                        'id': str(member.id),
+                        'url': member.name,
+                        'last_name': member.global_name
+                    }
+                    new_member = User(**new_member)
+                    await session.merge(new_member)
+                    guild_member.append({
+                        'guild_id': str(guild.id),
+                        'user_id': str(member.id)
+                    })
+
+            print('Commit..')
+            await session.commit()
+
+        async with self.async_session.begin() as session:
+            await session.execute(insert(GuildBinding).values(guild_member).on_conflict_do_nothing())
+
+            await session.commit()
+            print('Added members to guilds')
 
     @commands.command()
     async def start(self, ctx):
-        log = (f"Использовал команду start", str(ctx.author.id), ctx.author.name, datetime.now().strftime("%Y-%m-%d "
-                                                                                                            "%H:%M:%S"),
-               str(ctx.guild.id))
-        self.sql.execute("INSERT INTO `Logs` (action, user_id, user_name, created_at, guild_id) VALUES (%s, %s, "
-                         "%s, %s, %s)", log)
-        self.sql.execute(f"SELECT cid FROM Servers WHERE guild_id = {ctx.guild.id}")
-        cid = list(self.sql.fetchone())[0]
-        if cid is not None and len(cid) == 18:
-            await ctx.send(f'Канал уже создан', delete_after=2.0)
-        else:
-            ch = await ctx.guild.create_text_channel("dbot-channel", topic="Канал для музыки и различных команд")
-            reaction_lst = ["⏯", "⏹", "⏭"]
-            emb = discord.Embed(color=0x7b00ff)
-            emb.add_field(name='Чат', value='| [Автор](https://steamcommunity.com/id/deydya/) |')
-            emb.set_footer(text="Если не знаете, что делать, пишите >help")
+        async with self.session.begin() as session:
+            channel = await session.scalar(select(GuildChannel.id).where(GuildChannel.guild_id == str(ctx.guild.id)))
+            if channel:
+                await ctx.send(f'Канал уже создан', delete_after=2.0)
+            else:
+                ch = await ctx.guild.create_text_channel("dbot-channel", topic="Канал для музыки и различных команд")
+                reaction_lst = ["⏯", "⏹", "⏭"]
+                emb = discord.Embed(color=0x7b00ff)
+                emb.add_field(name='Чат', value='| [Автор](https://steamcommunity.com/id/deydya/) |')
+                emb.set_footer(text="Если не знаете, что делать, пишите >help")
 
-            emb.set_image(url='http://ii.yakuji.moe/b/src/1600903499659.png')
-            message = await ch.send(embed=emb)
-            for reaction in reaction_lst:
-                await message.add_reaction(reaction)
-            await ctx.send(f'Канал создан', delete_after=2.0)
-            cid = ch.id
-        self.sql.execute(f"UPDATE Servers SET cid = {cid} WHERE guild_id = {ctx.guild.id}")
-        self.db.commit()
+                emb.set_image(url='http://ii.yakuji.moe/b/src/1600903499659.png')
+                message = await ch.send(embed=emb)
+                for reaction in reaction_lst:
+                    await message.add_reaction(reaction)
+                await ctx.send(f'Канал создан', delete_after=2.0)
+                cid = ch.id
+            await session.execute(insert(ChannelPurpose).values({'id': 0, 'name': 'command'}).on_conflict_do_nothing())
+            await session.execute(insert(GuildChannel).values(
+                {'id': str(cid), 'guild_id': str(ctx.guild.id), 'user_id': str(ctx.author.id),
+                 'last_name': "dbot-channel", 'channel_purpose_id': 0}))
+            await session.commit()
 
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel):
@@ -124,5 +160,5 @@ class Listen(commands.Cog):
                 print(repr(e))
 
 
-def setup(bot):
-    bot.add_cog(Listen(bot))
+async def setup(client):
+    await client.add_cog(Listen(client))

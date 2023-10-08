@@ -18,5 +18,5 @@ class Core(commands.Cog):
         await ctx.send(f'`{latency}ms`')
 
 
-def setup(bot):
-    bot.add_cog(Core(bot))
+async def setup(client):
+    await client.add_cog(Core(client))

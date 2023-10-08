@@ -90,5 +90,5 @@ class Games(commands.Cog):
         config.wlog('knb', ctx)
 
 
-def setup(bot):
-    bot.add_cog(Games(bot))
+async def setup(client):
+    await client.add_cog(Games(client))

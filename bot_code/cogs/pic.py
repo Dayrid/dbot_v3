@@ -37,5 +37,5 @@ class Pic(commands.Cog):
 		await ctx.send(embed=embed)
 		config.wlog('rodich', ctx)
 
-def setup(bot):
-	bot.add_cog(Pic(bot))
+async def setup(client):
+    await client.add_cog(Pic(client))

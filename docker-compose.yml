@@ -1,6 +1,19 @@
 version: '3.8'
 
 services:
+  pgsql:
+    container_name: pgsql
+    image: postgres:latest
+    ports: [ 127.0.0.1:5432:5432 ]
+    restart: always
+    environment:
+     - TZ="Asia/Yekaterinburg"
+     - POSTGRES_HOST=pgsql
+     - POSTGRES_PORT=5432
+     - POSTGRES_DB=main-db
+     - POSTGRES_USER=postgres
+     - POSTGRES_PASSWORD=pgsql-user-password
+     - POSTGRES_HOST_AUTH_METHOD=trust
 
   discord-bot:
     container_name: discord-bot
@@ -8,17 +21,9 @@ services:
     command: python ./bot_code/BotPython.py
     ports:
       - 5672:5672
-  
-  # pgsql:
-  #   container_name: pgsql
-  #   image: postgres:latest
-  #   ports: [ 127.0.0.1:5432:5432 ]
-  #   restart: always
-  #   environment:
-  #     - TZ="Asia/Yekaterinburg"
-  #     - POSTGRES_HOST=pgsql
-  #     - POSTGRES_PORT=5432
-  #     - POSTGRES_DB=main-db
-  #     - POSTGRES_USER=postgres
-  #     - POSTGRES_PASSWORD=
-  #     - POSTGRES_HOST_AUTH_METHOD=trust
+    depends_on:
+      - pgsql
+
+networks:
+  default:
+    name: bot-network

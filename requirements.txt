@@ -10,3 +10,6 @@ pandas==1.4.2
 pymysql==1.0.2
 python-dotenv==0.20.0
 pygelbooru==0.5.0
+sqlalchemy==2.0.17
+asyncpg==0.27.0
+psycopg2-binary==2.9.6

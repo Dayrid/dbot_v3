@@ -214,5 +214,5 @@ class Booru(commands.Cog):
         await ctx.send(embed=embed)
 
 
-def setup(bot):
-    bot.add_cog(Booru(bot))
+async def setup(client):
+    await client.add_cog(Booru(client))

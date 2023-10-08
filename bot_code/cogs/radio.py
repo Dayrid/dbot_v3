@@ -32,5 +32,5 @@ class Radio(commands.Cog):
         await ctx.message.delete()
         config.wlog('radio_stop', ctx)
 
-def setup(bot):
-    bot.add_cog(Radio(bot))
+async def setup(client):
+    await client.add_cog(Radio(client))
